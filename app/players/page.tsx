@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { AppShell } from "../../components/app-shell";
 import { useAuth } from "../../components/auth-provider";
 import { PageHeader } from "../../components/ui";
+import { PlayerFormModal, type PlayerFormValue } from "../../components/player-form-modal";
 import { createBrowserClient } from "../../lib/supabase/client";
 
 type PlayerRow = {
@@ -38,6 +39,9 @@ export default function PlayersPage() {
   const [search, setSearch] = useState("");
   const [position, setPosition] = useState("all");
   const [requestId, setRequestId] = useState(0);
+  const [teamId, setTeamId] = useState("");
+  const [showCreate, setShowCreate] = useState(false);
+  const [success, setSuccess] = useState("");
   const userId = session?.user.id;
 
   useEffect(() => {
@@ -75,6 +79,7 @@ export default function PlayersPage() {
         setLoading(false);
         return;
       }
+      setTeamId(membership.team_id);
 
       const { data, error: playersError } = await supabase
         .from("players")
@@ -113,8 +118,19 @@ export default function PlayersPage() {
     setRequestId(value => value + 1);
   }
 
+  async function createPlayer(value:PlayerFormValue){
+    const supabase=createBrowserClient();if(!supabase||!teamId)return "Không thể xác định Supabase hoặc đội hiện tại.";
+    const {data:duplicate,error:duplicateError}=await supabase.from("players").select("id").eq("team_id",teamId).eq("jersey_number",value.jersey_number).limit(1).maybeSingle();
+    if(duplicateError)return `Không thể kiểm tra số áo: ${duplicateError.message}`;
+    if(duplicate)return `Số áo #${value.jersey_number} đã được sử dụng trong đội.`;
+    const {error:insertError}=await supabase.from("players").insert({team_id:teamId,...value} as never);
+    if(insertError)return insertError.code==="23505"?`Số áo #${value.jersey_number} đã được sử dụng trong đội.`:`Không thể thêm cầu thủ: ${insertError.message}`;
+    setShowCreate(false);setSuccess("Đã thêm cầu thủ thành công.");setRequestId(current=>current+1);return null;
+  }
+
   return <AppShell><div className="page">
-    <PageHeader eyebrow="ĐỘI HÌNH / ROSTER" title="Cầu thủ" description="Danh sách cầu thủ của đội từ Supabase." action={<button className="primary-btn">＋ Thêm cầu thủ</button>}/>
+    <PageHeader eyebrow="ĐỘI HÌNH / ROSTER" title="Cầu thủ" description="Danh sách cầu thủ của đội từ Supabase." action={<button className="primary-btn" onClick={()=>{setSuccess("");setShowCreate(true)}}>＋ Thêm cầu thủ</button>}/>
+    {success&&<div className="notice" style={{background:"#e5f7f1",color:"#167d62"}}>{success}</div>}
     <div className="toolbar">
       <div className="search"><input value={search} onChange={event=>setSearch(event.target.value)} placeholder="Tìm theo tên hoặc số áo…" aria-label="Tìm cầu thủ"/></div>
       <select className="filter-select" value={position} onChange={event=>setPosition(event.target.value)} aria-label="Lọc theo vị trí">
@@ -141,5 +157,6 @@ export default function PlayersPage() {
         {visiblePlayers.length===0 && <tr><td colSpan={5} style={{textAlign:"center",color:"var(--muted)",padding:32}}>Không có cầu thủ phù hợp.</td></tr>}
       </tbody>
     </table>}
+    {showCreate&&<PlayerFormModal mode="create" onClose={()=>setShowCreate(false)} onSave={createPlayer}/>}
   </div></AppShell>;
 }

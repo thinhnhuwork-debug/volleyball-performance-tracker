@@ -7,6 +7,7 @@ import { useAuth } from "../../../components/auth-provider";
 import { Avatar, PageHeader } from "../../../components/ui";
 import { SetterCourtMap, type CourtZoneStat } from "../../../components/volleyball/setter-court-map";
 import { createBrowserClient } from "../../../lib/supabase/client";
+import { PlayerFormModal, type PlayerFormValue, type PlayerPosition } from "../../../components/player-form-modal";
 
 type Player={id:string;team_id:string;full_name:string;jersey_number:number;position:string;avatar_url:string|null;height_cm:number|null;is_active:boolean};
 type Match={id:string;played_at:string;home_team_name:string;away_team_name:string;is_home:boolean;competition:string|null};
@@ -33,6 +34,8 @@ export default function PlayerPage(){
   const [error,setError]=useState("");
   const [notFound,setNotFound]=useState(false);
   const [requestId,setRequestId]=useState(0);
+  const [showEdit,setShowEdit]=useState(false);
+  const [success,setSuccess]=useState("");
 
   useEffect(()=>{
     if(!userId||!playerId)return;
@@ -86,14 +89,24 @@ export default function PlayerPage(){
   },[data]);
 
   function retry(){setLoading(true);setError("");setNotFound(false);setRequestId(value=>value+1)}
+  async function updatePlayer(value:PlayerFormValue){
+    if(!data)return "Không tìm thấy dữ liệu cầu thủ.";const supabase=createBrowserClient();if(!supabase)return "Supabase chưa được cấu hình.";
+    const {data:duplicate,error:duplicateError}=await supabase.from("players").select("id").eq("team_id",data.player.team_id).eq("jersey_number",value.jersey_number).neq("id",data.player.id).limit(1).maybeSingle();
+    if(duplicateError)return `Không thể kiểm tra số áo: ${duplicateError.message}`;if(duplicate)return `Số áo #${value.jersey_number} đã được sử dụng trong đội.`;
+    const {data:updated,error:updateError}=await supabase.from("players").update({...value,updated_at:new Date().toISOString()} as never).eq("id",data.player.id).eq("team_id",data.player.team_id).select("id").maybeSingle();
+    if(updateError)return updateError.code==="23505"?`Số áo #${value.jersey_number} đã được sử dụng trong đội.`:`Không thể cập nhật cầu thủ: ${updateError.message}`;if(!updated)return "Cầu thủ không tồn tại hoặc bạn không có quyền chỉnh sửa.";
+    setShowEdit(false);setSuccess("Đã cập nhật cầu thủ thành công.");setLoading(true);setRequestId(current=>current+1);return null;
+  }
   if(loading)return <AppShell><div className="page"><section className="panel auth-loading" style={{minHeight:360}} aria-live="polite"><span className="auth-spinner"/><p>Đang tải hồ sơ cầu thủ từ Supabase…</p></section></div></AppShell>;
   if(error)return <AppShell><div className="page"><PageHeader title="Hồ sơ cầu thủ" description="Không thể tải dữ liệu."/><section className="panel"><div className="login-error" role="alert"><strong>Lỗi tải cầu thủ</strong><br/>{error}</div><button className="secondary-btn" onClick={retry} style={{marginTop:14}}>Thử lại / Retry</button></section></div></AppShell>;
   if(notFound||!data||!computed)return <AppShell><div className="page"><PageHeader title="Không tìm thấy cầu thủ" description="Cầu thủ không tồn tại hoặc không thuộc đội mà bạn có quyền truy cập."/><section className="panel" style={{textAlign:"center",color:"var(--muted)",padding:40}}>Không có dữ liệu cầu thủ cho UUID này.</section></div></AppShell>;
 
   const {player}=data,isSetter=player.position==="setter";
+  const editInitialValue:PlayerFormValue={full_name:player.full_name,jersey_number:player.jersey_number,position:player.position as PlayerPosition,height_cm:player.height_cm,is_active:player.is_active};
   const matchCount=new Set([...data.generalStats.map(stat=>stat.match_id),...data.setterStats.map(stat=>stat.match_id)]).size;
   return <AppShell><div className="page">
-    <PageHeader eyebrow="HIỆU SUẤT CẦU THỦ / PLAYER PERFORMANCE" title={`${player.full_name} #${player.jersey_number}`} description={`${positionLabels[player.position]??player.position} · ${player.height_cm?`${player.height_cm} cm · `:""}${player.is_active?"Đang hoạt động / Active":"Ngừng hoạt động / Inactive"}`} action={<button className="secondary-btn">Chỉnh sửa hồ sơ</button>}/>
+    <PageHeader eyebrow="HIỆU SUẤT CẦU THỦ / PLAYER PERFORMANCE" title={`${player.full_name} #${player.jersey_number}`} description={`${positionLabels[player.position]??player.position} · ${player.height_cm?`${player.height_cm} cm · `:""}${player.is_active?"Đang hoạt động / Active":"Ngừng hoạt động / Inactive"}`} action={<button className="secondary-btn" onClick={()=>{setSuccess("");setShowEdit(true)}}>Chỉnh sửa / Edit</button>}/>
+    {success&&<div className="notice" style={{background:"#e5f7f1",color:"#167d62"}}>{success}</div>}
     <div className="panel" style={{marginBottom:14}}><div className="player-cell">{player.avatar_url?<span className="player-avatar lg" style={{backgroundImage:`url(${player.avatar_url})`,backgroundSize:"cover",backgroundPosition:"center"}}/>:<Avatar initials={initials(player.full_name)} color="#7157ff" size="lg"/>}<div><span className="position-tag">{positionLabels[player.position]??player.position}</span><h2 style={{margin:"8px 0 4px"}}>{player.full_name}</h2><small style={{color:"var(--muted)"}}>{matchCount} trận có thống kê · UUID: {player.id}</small></div></div></div>
 
     {isSetter?<>
@@ -102,6 +115,7 @@ export default function PlayerPage(){
       <section className="two-col" style={{marginTop:14}}><article className="panel"><div className="panel-head"><div><h2>Xu hướng hiệu suất chuyền 2 / Setter Performance Trend</h2><p>Độ chính xác chuyền qua các trận có dữ liệu</p></div></div>{computed.orderedSetter.length?<div className="trend-chart">{computed.orderedSetter.slice(0,5).reverse().map(stat=>{const attempts=stat.perfect_sets+stat.playable_sets+stat.bad_sets+stat.set_errors,accuracy=percentage(stat.perfect_sets+stat.playable_sets,attempts),match=computed.matchById.get(stat.match_id);return <div className="trend-col" key={stat.id}><i style={{height:`${accuracy*1.8}px`}}/><b>{accuracy.toFixed(1)}%</b><div>{match?opponentName(match):"—"}</div></div>})}</div>:<div style={{padding:38,textAlign:"center",color:"var(--muted)"}}>Chưa có setter_match_stats.</div>}</article><MetricGuide/></section>
       <article className="panel" style={{marginTop:14}}><div className="panel-head"><div><h2>Lịch sử trận đấu / Match History</h2><p>Thống kê chuyền hai thật từ Supabase</p></div></div>{computed.orderedSetter.length?<table className="data-table" style={{marginTop:14}}><thead><tr><th>TRẬN / MATCH</th><th>CHẠM / TOUCHES</th><th>CHUYỀN / ATTEMPTS</th><th>PERFECT</th><th>PLAYABLE</th><th>BAD</th><th>ERROR</th><th>ASSISTS</th><th>ACCURACY</th></tr></thead><tbody>{computed.orderedSetter.map(stat=>{const match=computed.matchById.get(stat.match_id),attempts=stat.perfect_sets+stat.playable_sets+stat.bad_sets+stat.set_errors;return <tr key={stat.id}><td><b>{match?`${formatDate(match.played_at)} · vs ${opponentName(match)}`:stat.match_id}</b></td><td>{stat.total_touches}</td><td>{attempts}</td><td>{stat.perfect_sets}</td><td>{stat.playable_sets}</td><td>{stat.bad_sets}</td><td>{stat.set_errors}</td><td>{stat.assists}</td><td><b>{formatPercent(stat.perfect_sets+stat.playable_sets,attempts)}</b></td></tr>})}</tbody></table>:<EmptyStats/>}</article>
     </>:<GeneralPlayerStats data={data} computed={computed}/>}
+    {showEdit&&<PlayerFormModal mode="edit" initialValue={editInitialValue} onClose={()=>setShowEdit(false)} onSave={updatePlayer}/>}
   </div></AppShell>;
 }
 
