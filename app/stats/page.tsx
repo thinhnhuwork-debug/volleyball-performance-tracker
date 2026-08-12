@@ -17,12 +17,16 @@ type Distribution=Record<Zone,ZoneStats>;
 
 const emptyGeneral:GeneralStats={serve_attempts:0,aces:0,serve_errors:0,attack_attempts:0,kills:0,attack_errors:0,solo_blocks:0,block_assists:0,digs:0,dig_errors:0,reception_attempts:0,perfect_receptions:0,good_receptions:0,poor_receptions:0,reception_errors:0};
 const emptySetter:SetterStats={total_touches:0,perfect_sets:0,playable_sets:0,bad_sets:0,set_errors:0,assists:0};
+const generalNumericFields=Object.keys(emptyGeneral) as Array<keyof GeneralStats>;
+const setterNumericFields=Object.keys(emptySetter) as Array<keyof SetterStats>;
+const zoneNumericFields:Array<keyof ZoneStats>=["set_attempts","kills","attack_errors"];
 const zones:Zone[]=["P2","P3","P4","P6","OTHER"];
 const emptyDistribution=():Distribution=>({P2:{set_attempts:0,kills:0,attack_errors:0},P3:{set_attempts:0,kills:0,attack_errors:0},P4:{set_attempts:0,kills:0,attack_errors:0},P6:{set_attempts:0,kills:0,attack_errors:0},OTHER:{set_attempts:0,kills:0,attack_errors:0}});
 const positionLabels:Record<string,string>={setter:"Chuyền 2 / Setter",outside_hitter:"Chủ công / Outside Hitter",opposite:"Đối chuyền / Opposite",middle_blocker:"Phụ công / Middle Blocker",libero:"Libero",defensive_specialist:"Chuyên gia phòng thủ / Defensive Specialist"};
 const zoneLabels:Record<Zone,string>={P2:"Vị trí 2 · Biên phải",P3:"Vị trí 3 · Giữa",P4:"Vị trí 4 · Biên trái",P6:"Vị trí 6 · Hàng sau",OTHER:"Khác / Other"};
 const formatDate=(value:string)=>new Intl.DateTimeFormat("vi-VN",{day:"2-digit",month:"short",year:"numeric"}).format(new Date(value));
 const percent=(value:number,total:number)=>total?`${(value/total*100).toFixed(1)}%`:"0.0%";
+const normalizeNumericInput=(value:string)=>{const parsed=Number(value);return Number.isFinite(parsed)?parsed:0};
 
 async function fetchExisting(supabase:SupabaseClient,matchId:string,playerId:string,isSetter:boolean){
   const [{data:generalData,error:generalError},{data:setterData,error:setterError}]=await Promise.all([
@@ -38,10 +42,11 @@ async function fetchExisting(supabase:SupabaseClient,matchId:string,playerId:str
     if(distributionError)throw new Error(`Không thể đọc setter_distribution: ${distributionError.message}`);
     for(const row of (distributionData??[]) as Array<ZoneStats&{zone:Zone}>){distribution={...distribution,[row.zone]:{set_attempts:row.set_attempts,kills:row.kills,attack_errors:row.attack_errors}}}
   }
-  return {general:{...emptyGeneral,...(generalData as Partial<GeneralStats>|null)},setter:{...emptySetter,...setterRow},distribution};
+  const loadedSetter:SetterStats=setterRow?{total_touches:Number(setterRow.total_touches),perfect_sets:Number(setterRow.perfect_sets),playable_sets:Number(setterRow.playable_sets),bad_sets:Number(setterRow.bad_sets),set_errors:Number(setterRow.set_errors),assists:Number(setterRow.assists)}:{...emptySetter};
+  return {general:{...emptyGeneral,...(generalData as Partial<GeneralStats>|null)},setter:loadedSetter,distribution};
 }
 
-const Num=({label,value,set,disabled=false}:{label:string;value:number;set:(value:number)=>void;disabled?:boolean})=><div className="field"><label>{label}</label><input type="number" min="0" step="1" value={value} disabled={disabled} onChange={event=>set(Number(event.target.value))}/></div>;
+const Num=({label,value,set,disabled=false}:{label:string;value:number;set:(value:number)=>void;disabled?:boolean})=><div className="field"><label>{label}</label><input type="number" min="0" step="1" value={value} disabled={disabled} onChange={event=>set(normalizeNumericInput(event.target.value))}/></div>;
 
 export default function StatsPage(){
   const {session}=useAuth();
@@ -124,15 +129,15 @@ export default function StatsPage(){
 
   const validation=useMemo(()=>{
     const errors:string[]=[];
-    for(const [key,value] of Object.entries(general)){if(!Number.isInteger(value)||value<0)errors.push(`${key} phải là số nguyên ≥ 0.`)}
+    for(const key of generalNumericFields){const value=general[key];if(!Number.isInteger(value)||value<0)errors.push(`${key} phải là số nguyên ≥ 0.`)}
     if(general.aces+general.serve_errors>general.serve_attempts)errors.push("Ace + lỗi phát bóng không được vượt số lần phát.");
     if(general.kills+general.attack_errors>general.attack_attempts)errors.push("Kill + lỗi tấn công không được vượt số lần tấn công.");
     if(general.perfect_receptions+general.good_receptions+general.poor_receptions+general.reception_errors>general.reception_attempts)errors.push("Tổng phân loại bước một không được vượt số lần đỡ bước một.");
     if(isSetter){
-      for(const [key,value] of Object.entries(setter)){if(!Number.isInteger(value)||value<0)errors.push(`${key} phải là số nguyên ≥ 0.`)}
+      for(const key of setterNumericFields){const value=setter[key];if(!Number.isInteger(value)||value<0)errors.push(`${key} phải là số nguyên ≥ 0.`)}
       if(setter.total_touches<setterAttempts)errors.push("Tổng lần chạm phải ≥ tổng Setter Set Attempts.");
       if(setter.assists>setterAttempts)errors.push("Assists không được vượt tổng Setter Set Attempts.");
-      for(const zone of zones){const row=distribution[zone];for(const [key,value] of Object.entries(row)){if(!Number.isInteger(value)||value<0)errors.push(`${zone} ${key} phải là số nguyên ≥ 0.`)}if(row.kills+row.attack_errors>row.set_attempts)errors.push(`${zone}: kills + attack errors không được vượt set attempts.`)}
+      for(const zone of zones){const row=distribution[zone];for(const key of zoneNumericFields){const value=row[key];if(!Number.isInteger(value)||value<0)errors.push(`${zone} ${key} phải là số nguyên ≥ 0.`)}if(row.kills+row.attack_errors>row.set_attempts)errors.push(`${zone}: kills + attack errors không được vượt set attempts.`)}
       const distributed=zones.reduce((sum,zone)=>sum+distribution[zone].set_attempts,0);
       if(distributed!==setterAttempts)errors.push(`Tổng phân bố (${distributed}) phải bằng tổng Setter Set Attempts (${setterAttempts}).`);
     }
